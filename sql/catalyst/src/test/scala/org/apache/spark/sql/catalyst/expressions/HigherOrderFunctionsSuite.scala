@@ -132,6 +132,19 @@ class HigherOrderFunctionsSuite extends SparkFunSuite with ExpressionEvalHelper 
     aggregate(expr, zero, merge, identity)
   }
 
+  def array_scan(
+                 expr: Expression,
+                 zero: Expression,
+                 merge: (Expression, Expression) => Expression): Expression = {
+    val ArrayType(et, cn) = expr.dataType
+    val zeroType = zero.dataType
+    ArrayScan(
+      expr,
+      zero,
+      createLambda(zeroType, true, et, cn, merge))
+      .bind(validateBinding)
+  }
+
   def transformValues(expr: Expression, f: (Expression, Expression) => Expression): Expression = {
     val MapType(kt, vt, vcn) = expr.dataType
     TransformValues(expr, createLambda(kt, false, vt, vcn, f)).bind(validateBinding)
@@ -445,6 +458,23 @@ class HigherOrderFunctionsSuite extends SparkFunSuite with ExpressionEvalHelper 
       aggregate(aai, 0,
         (acc, array) => coalesce(aggregate(array, acc, (acc, elem) => acc + elem), acc)),
       15)
+  }
+
+  test("ArrayScan") {
+    val ai0 = Literal.create(Seq(1, 2, 3), ArrayType(IntegerType, containsNull = false))
+    val ai1 = Literal.create(Seq[Integer](1, null, 3),
+      ArrayType(IntegerType, containsNull = true))
+    val ai2 = Literal.create(Seq.empty[Int], ArrayType(IntegerType, containsNull = false))
+    val ain = Literal.create(null, ArrayType(IntegerType, containsNull = false))
+
+    checkEvaluation(array_scan(ai0, 0, (acc, elem) => acc + elem), Seq(0, 1, 3, 6))
+    checkEvaluation(array_scan(ai0, 2, (acc, elem) => acc * elem), Seq(2, 2, 4, 12))
+    checkEvaluation(array_scan(ai1, 0, (acc, elem) => acc + coalesce(elem, 0)), Seq(0, 1, 1, 4))
+    checkEvaluation(array_scan(ai1, 1, (acc, elem) => acc * elem), Seq(1, 1, null, null))
+    checkEvaluation(array_scan(ai1, 1, (acc, elem) => acc * coalesce(elem, 0)), Seq(1, 1, 0, 0))
+    checkEvaluation(array_scan(ai2, 0, (acc, elem) => acc + elem), Seq(0))
+    checkEvaluation(array_scan(ain, 0, (acc, elem) => acc + elem), null)
+
   }
 
   test("TransformKeys") {
